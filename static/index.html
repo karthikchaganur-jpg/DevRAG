@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8f6"><title>DevRAG — Codebase intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/"><span class="brand-mark"><i></i><i></i><i></i></span><span>devrag</span></a>
+      <div class="workspace-label">WORKSPACE</div>
+      <div class="repo-card"><div class="repo-icon">⌘</div><div class="repo-info"><strong>Local repository</strong><span id="repo-name">Not indexed</span></div><span class="repo-dots">•••</span></div>
+      <button id="index-button" class="index-button"><span>＋</span> Index a repository</button>
+      <div class="sidebar-divider"></div>
+      <div class="side-heading">YOUR SPACE</div>
+      <button class="nav-item active"><span>◉</span> Ask your codebase</button>
+      <button class="nav-item" id="files-nav"><span>▤</span> Source files <span id="file-count" class="count">—</span></button>
+      <div class="side-bottom"><div class="status-card"><span class="pulse" id="status-pulse"></span><div><strong id="status-title">Ready when you are</strong><small id="status-subtitle">Index a repo to get started</small></div></div><div class="side-foot"><span class="mini-shield">◇</span> Your code stays local</div></div>
+    </aside>
+    <main class="main-area">
+      <header class="topbar"><div class="breadcrumb"><span>Workspace</span><b>/</b><strong>Ask your codebase</strong></div><div class="top-actions"><span class="model-pill"><span class="model-dot"></span><span id="model-state">Local search</span></span><button class="avatar">K</button></div></header>
+      <section class="content" id="content">
+        <div class="hero" id="hero">
+          <div class="eyebrow"><span class="spark">✳</span> CODEBASE INTELLIGENCE</div>
+          <h1>Your codebase,<br><em>understood.</em></h1>
+          <p class="hero-copy">Ask questions in plain language. Get answers grounded in your code, with references you can follow.</p>
+          <label class="repo-input-wrap"><span class="folder-glyph">▱</span><input id="repo-path" spellcheck="false" placeholder="C:\path\to\your\repository"><button id="hero-index">Index repository <span>↗</span></button></label>
+          <div class="privacy"><span>◇</span> Runs locally on your machine <i></i> Add an API key for AI-generated answers</div>
+          <div class="examples-label">TRY ASKING</div>
+          <div class="suggestions">
+            <button class="suggestion" data-question="Where is authentication handled?"><span class="suggestion-icon auth">◈</span><span>Where is authentication handled?</span><b>↗</b></button>
+            <button class="suggestion" data-question="What happens when a user logs in?"><span class="suggestion-icon flow">⌁</span><span>What happens when a user logs in?</span><b>↗</b></button>
+            <button class="suggestion" data-question="Which functions call the database?"><span class="suggestion-icon db">▦</span><span>Which functions call the database?</span><b>↗</b></button>
+            <button class="suggestion" data-question="Where could a null reference error originate?"><span class="suggestion-icon bug">⌕</span><span>Where could a null reference error originate?</span><b>↗</b></button>
+          </div>
+        </div>
+        <div class="chat-view hidden" id="chat-view"><div class="chat-feed" id="chat-feed"></div></div>
+      </section>
+      <div class="composer-wrap"><form class="composer" id="ask-form"><span class="composer-plus">＋</span><textarea id="question" rows="1" placeholder="Ask anything about your codebase..." aria-label="Question"></textarea><button type="submit" id="send-button" aria-label="Send question">↑</button></form><div class="composer-hint">DevRAG can make mistakes. Verify important details in the source. <span>↵ to send</span></div></div>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
