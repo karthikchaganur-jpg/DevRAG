@@ -1,6 +1,6 @@
 # DevRAG
 
-DevRAG indexes a local source repository, retrieves relevant code excerpts, and answers questions with file and line references. It runs locally; source files stay on your machine. An OpenAI API key is optional and only used to synthesize answers from the retrieved excerpts.
+DevRAG indexes local source repositories, retrieves relevant code excerpts, and answers questions with file and line references. You can save multiple repository paths, switch between them, and browse the current repository's source files in the UI. It runs locally; source files stay on your machine. Saved paths are kept in `~/.devrag/repos.json`. An OpenAI API key is optional and only used to synthesize answers from the retrieved excerpts.
 
 ## Run locally
 
@@ -16,6 +16,9 @@ Open http://127.0.0.1:8000. Enter the repository path and click **Index reposito
 ## API
 
 - `POST /api/index` with `{ "path": "C:/path/to/repository" }`
+- `GET /api/repos` and `POST /api/repos` to list and save local repositories
+- `POST /api/repos/select` with `{ "id": "..." }` to switch the active repository
+- `GET /api/files` and `GET /api/files/content?path=...` to browse indexed source files
 - `POST /api/ask` with `{ "question": "Where is authentication handled?", "limit": 6 }`
 - `GET /api/status`
 

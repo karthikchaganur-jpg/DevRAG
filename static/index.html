@@ -12,8 +12,8 @@
     <aside class="sidebar">
       <a class="brand" href="/"><span class="brand-mark"><i></i><i></i><i></i></span><span>devrag</span></a>
       <div class="workspace-label">WORKSPACE</div>
-      <div class="repo-card"><div class="repo-icon">⌘</div><div class="repo-info"><strong>Local repository</strong><span id="repo-name">Not indexed</span></div><span class="repo-dots">•••</span></div>
-      <button id="index-button" class="index-button"><span>＋</span> Index a repository</button>
+      <div class="repo-card"><div class="repo-icon">⌘</div><div class="repo-info"><strong>Current repository</strong><select id="repo-select" aria-label="Select a saved repository"><option value="">No repository selected</option></select></div></div>
+      <button id="index-button" class="index-button"><span>＋</span> Add a repository</button>
       <div class="sidebar-divider"></div>
       <div class="side-heading">YOUR SPACE</div>
       <button class="nav-item active"><span>◉</span> Ask your codebase</button>
@@ -27,7 +27,7 @@
           <div class="eyebrow"><span class="spark">✳</span> CODEBASE INTELLIGENCE</div>
           <h1>Your codebase,<br><em>understood.</em></h1>
           <p class="hero-copy">Ask questions in plain language. Get answers grounded in your code, with references you can follow.</p>
-          <label class="repo-input-wrap"><span class="folder-glyph">▱</span><input id="repo-path" spellcheck="false" placeholder="C:\path\to\your\repository"><button id="hero-index">Index repository <span>↗</span></button></label>
+          <label class="repo-input-wrap"><span class="folder-glyph">▱</span><input id="repo-path" spellcheck="false" placeholder="C:\path\to\your\repository"><button id="hero-index">Add &amp; index <span>↗</span></button></label>
           <div class="privacy"><span>◇</span> Runs locally on your machine <i></i> Add an API key for AI-generated answers</div>
           <div class="examples-label">TRY ASKING</div>
           <div class="suggestions">
@@ -38,6 +38,10 @@
           </div>
         </div>
         <div class="chat-view hidden" id="chat-view"><div class="chat-feed" id="chat-feed"></div></div>
+        <section class="files-view hidden" id="files-view">
+          <div class="files-heading"><div><div class="eyebrow">CURRENT REPOSITORY</div><h2>Source files</h2><p id="files-root">Select a file to preview its contents.</p></div><button id="back-to-ask" class="back-button">← Ask your codebase</button></div>
+          <div class="files-browser"><div class="file-list" id="file-list"><div class="file-empty">Index a repository to browse its files.</div></div><div class="file-preview"><div class="file-preview-head"><strong id="file-title">Choose a file</strong><span id="file-lines"></span></div><pre id="file-content">File contents will appear here.</pre></div></div>
+        </section>
       </section>
       <div class="composer-wrap"><form class="composer" id="ask-form"><span class="composer-plus">＋</span><textarea id="question" rows="1" placeholder="Ask anything about your codebase..." aria-label="Question"></textarea><button type="submit" id="send-button" aria-label="Send question">↑</button></form><div class="composer-hint">DevRAG can make mistakes. Verify important details in the source. <span>↵ to send</span></div></div>
     </main>

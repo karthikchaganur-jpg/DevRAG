@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import os
 import re
 from pathlib import Path
@@ -16,8 +18,11 @@ STATIC = Path(__file__).parent / "static"
 SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", "dist", "build", ".next"}
 TEXT_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".c", ".h", ".cpp", ".cs", ".rb", ".php", ".swift", ".kt", ".sql", ".md", ".yaml", ".yml", ".toml", ".json", ".html", ".css", ".sh"}
 MAX_FILE_BYTES = 500_000
+REGISTRY_PATH = Path.home() / ".devrag" / "repos.json"
 chunks: list[dict[str, Any]] = []
 indexed_root: Path | None = None
+repo_files: list[dict[str, Any]] = []
+active_repo_id: str | None = None
 app = FastAPI(title="DevRAG", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -29,6 +34,34 @@ class IndexRequest(BaseModel):
 class AskRequest(BaseModel):
     question: str
     limit: int = 6
+
+
+class RepoSelectRequest(BaseModel):
+    id: str
+
+
+def load_registry() -> dict[str, Any]:
+    try:
+        data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("repos"), list):
+            return {"repos": data["repos"], "current_id": data.get("current_id")}
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"repos": [], "current_id": None}
+
+
+registry = load_registry()
+
+
+def save_registry() -> None:
+    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = REGISTRY_PATH.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+    temp_path.replace(REGISTRY_PATH)
+
+
+def repository_id(path: Path) -> str:
+    return hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
 
 
 def split_chunks(path: Path, text: str) -> list[dict[str, Any]]:
@@ -51,10 +84,11 @@ def split_chunks(path: Path, text: str) -> list[dict[str, Any]]:
 
 
 def index_repository(root: Path) -> dict[str, Any]:
-    global chunks, indexed_root
+    global chunks, indexed_root, repo_files
     if not root.exists() or not root.is_dir():
         raise HTTPException(400, f"Folder not found: {root}")
     found: list[dict[str, Any]] = []
+    catalog: list[dict[str, Any]] = []
     files = 0
     for folder, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
@@ -71,9 +105,12 @@ def index_repository(root: Path) -> dict[str, Any]:
             if not content.strip():
                 continue
             files += 1
-            found.extend(split_chunks(path.relative_to(root), content))
+            relative = path.relative_to(root).as_posix()
+            catalog.append({"path": relative, "lines": len(content.splitlines()), "bytes": path.stat().st_size})
+            found.extend(split_chunks(Path(relative), content))
     chunks = found
     indexed_root = root
+    repo_files = sorted(catalog, key=lambda item: item["path"].lower())
     return {"files": files, "chunks": len(found), "root": str(root)}
 
 
@@ -206,13 +243,74 @@ def home():
 
 @app.get("/api/status")
 def status():
-    return {"indexed": indexed_root is not None, "root": str(indexed_root) if indexed_root else None, "files": len({c['path'] for c in chunks}), "chunks": len(chunks), "llm": bool(os.getenv("OPENAI_API_KEY"))}
+    return {"indexed": indexed_root is not None, "root": str(indexed_root) if indexed_root else None, "repo_id": active_repo_id, "files": len(repo_files), "chunks": len(chunks), "llm": bool(os.getenv("OPENAI_API_KEY"))}
+
+
+@app.get("/api/repos")
+def list_repositories():
+    return {"repos": registry["repos"], "current_id": registry.get("current_id")}
+
+
+@app.post("/api/repos")
+def add_repository(req: IndexRequest):
+    global active_repo_id
+    path = Path(req.path).expanduser().resolve() if req.path else ROOT
+    info = index_repository(path)
+    repo_id = repository_id(path)
+    repo = {"id": repo_id, "name": path.name or str(path), "path": str(path)}
+    registry["repos"] = [item for item in registry["repos"] if item.get("id") != repo_id]
+    registry["repos"].append(repo)
+    registry["current_id"] = repo_id
+    active_repo_id = repo_id
+    save_registry()
+    return {"repo": repo, "info": info, "repos": registry["repos"], "current_id": repo_id}
+
+
+@app.post("/api/repos/select")
+def select_repository(req: RepoSelectRequest):
+    global active_repo_id
+    repo = next((item for item in registry["repos"] if item.get("id") == req.id), None)
+    if not repo:
+        raise HTTPException(404, "Saved repository not found.")
+    path = Path(repo["path"]).expanduser().resolve()
+    info = index_repository(path)
+    registry["current_id"] = repo["id"]
+    active_repo_id = repo["id"]
+    save_registry()
+    return {"repo": repo, "info": info}
+
+
+@app.get("/api/files")
+def list_source_files():
+    if indexed_root is None:
+        raise HTTPException(400, "Select a repository first.")
+    return {"root": str(indexed_root), "files": repo_files}
+
+
+@app.get("/api/files/content")
+def read_source_file(path: str):
+    if indexed_root is None:
+        raise HTTPException(400, "Select a repository first.")
+    relative = Path(path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise HTTPException(400, "Invalid source file path.")
+    normalized = relative.as_posix()
+    if not any(item["path"] == normalized for item in repo_files):
+        raise HTTPException(404, "Source file not found in the current repository.")
+    resolved = (indexed_root / relative).resolve()
+    if not resolved.is_relative_to(indexed_root):
+        raise HTTPException(400, "Invalid source file path.")
+    try:
+        content = resolved.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise HTTPException(404, "Could not read source file.") from exc
+    return {"path": normalized, "content": content}
 
 
 @app.post("/api/index")
 def index(req: IndexRequest):
-    path = Path(req.path).expanduser().resolve() if req.path else ROOT
-    return index_repository(path)
+    result = add_repository(req)
+    return result["info"]
 
 
 @app.post("/api/ask")

@@ -1,16 +1,287 @@
-const $=s=>document.querySelector(s);let indexed=false;let toastTimer;let asking=false;
-function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),3000)}
-async function api(url,data){const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const payload=await res.json();if(!res.ok)throw new Error(payload.detail||'Something went wrong');return payload}
-function setIndexed(info){indexed=true;$('#repo-name').textContent=info.root.split(/[\\/]/).filter(Boolean).pop()||info.root;$('#repo-name').title=info.root;$('#file-count').textContent=info.files;$('#status-title').textContent='Repository indexed';$('#status-subtitle').textContent=`${info.files} files · ${info.chunks} code sections`;$('#status-pulse').classList.add('ready')}
-function setBusy(button,busy,label){button.disabled=busy;if(busy){button.dataset.label=button.textContent;button.textContent=label}else if(button.dataset.label){button.textContent=button.dataset.label;delete button.dataset.label}}
-async function indexRepo(button){const path=$('#repo-path').value.trim();setBusy(button,true,'Indexing…');try{const result=await api('/api/index',{path:path||null});setIndexed(result);$('#model-state').textContent='Local search';toast(`Indexed ${result.files} files`);if($('#hero').classList.contains('hidden')){$('#hero').classList.remove('hidden');$('#chat-view').classList.add('hidden')}}catch(e){toast(e.message)}finally{setBusy(button,false)}}
-$('#index-button').addEventListener('click',()=>indexRepo($('#index-button')));$('#hero-index').addEventListener('click',()=>indexRepo($('#hero-index')));
-function esc(value){return value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function answerMarkup(text){let safe=esc(text);safe=safe.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>');const html=safe.split('\n').map(line=>{const m=line.match(/^\d+\.\s+(.*)$/);if(m)return `<li>${m[1]}</li>`;if(!line.trim())return '';return `<p>${line}</p>`}).join('');return html.includes('<li>')?`<ol>${html.replace(/<p>(.*?)<\/p>/g,'$1')}</ol>`:html}
-function renderAnswer(result){const feed=$('#chat-feed');const card=document.createElement('article');card.className='answer-card';const sources=result.sources.map(s=>`<div class="source-item"><span class="source-path">${esc(s.path)}:${s.start}–${s.end}</span><pre>${esc(s.text)}</pre></div>`).join('');card.innerHTML=`<div class="answer-mark">✳</div><div class="answer-body">${answerMarkup(result.answer)}<div class="answer-meta">${result.sources.length} source${result.sources.length===1?'':'s'} retrieved</div><div class="sources"><div class="sources-head">REFERENCES</div>${sources||'<div class="source-item">No matching source excerpts</div>'}</div></div>`;feed.append(card);$('#content').scrollTo({top:$('#content').scrollHeight,behavior:'smooth'})}
-async function ask(question){if(asking)return;if(!indexed){toast('Index a repository first');$('#repo-path').focus();return}asking=true;$('#hero').classList.add('hidden');$('#chat-view').classList.remove('hidden');const feed=$('#chat-feed');const user=document.createElement('div');user.className='user-question';user.textContent=question;const wait=document.createElement('div');wait.className='answer-card';wait.innerHTML='<div class="answer-mark">✳</div><div class="answer-body loading">Searching your codebase<span class="dots"></span></div>';feed.append(user,wait);$('#content').scrollTo({top:$('#content').scrollHeight,behavior:'smooth'});setBusy($('#send-button'),true,'…');$('#question').disabled=true;try{const result=await api('/api/ask',{question,limit:6});wait.remove();renderAnswer(result)}catch(e){wait.remove();toast(e.message)}finally{asking=false;$('#question').disabled=false;setBusy($('#send-button'),false);$('#question').focus()}}
-$('#ask-form').addEventListener('submit',e=>{e.preventDefault();const input=$('#question');const value=input.value.trim();if(value){input.value='';input.style.height='auto';ask(value)}});
-$('#question').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('#ask-form').requestSubmit()}});$('#question').addEventListener('input',e=>{e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,110)+'px'});
-document.querySelectorAll('.suggestion').forEach(button=>button.addEventListener('click',()=>ask(button.dataset.question)));
-$('#files-nav').addEventListener('click',()=>toast(indexed?'Files are shown in the answer references':'Index a repository to see source files'));
-fetch('/api/status').then(r=>r.json()).then(s=>{if(s.indexed){indexed=true;$('#repo-name').textContent=s.root.split(/[\\/]/).filter(Boolean).pop()||s.root;$('#file-count').textContent=s.files;$('#status-title').textContent='Repository indexed';$('#status-subtitle').textContent=`${s.files} files · ${s.chunks} code sections`;$('#status-pulse').classList.add('ready')}if(s.llm)$('#model-state').textContent='AI answers'}).catch(()=>{});
+const $ = (selector) => document.querySelector(selector);
+
+let indexed = false;
+let asking = false;
+let toastTimer;
+let currentRepoId = null;
+let currentView = "hero";
+
+function toast(message) {
+  const element = $("#toast");
+  element.textContent = message;
+  element.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => element.classList.remove("show"), 3000);
+}
+
+async function request(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail || "Something went wrong.");
+  return payload;
+}
+
+const post = (url, data) => request(url, { method: "POST", body: JSON.stringify(data) });
+
+function setBusy(button, busy, label) {
+  button.disabled = busy;
+  if (busy) {
+    button.dataset.label = button.textContent;
+    button.textContent = label;
+  } else if (button.dataset.label) {
+    button.textContent = button.dataset.label;
+    delete button.dataset.label;
+  }
+}
+
+function setIndexed(info, repoId = currentRepoId) {
+  indexed = true;
+  currentRepoId = repoId;
+  $("#file-count").textContent = info.files;
+  $("#status-title").textContent = "Repository indexed";
+  $("#status-subtitle").textContent = `${info.files} files · ${info.chunks} code sections`;
+  $("#status-pulse").classList.add("ready");
+  $("#files-root").textContent = info.root;
+}
+
+function renderRepositories(repos, selectedId) {
+  const select = $("#repo-select");
+  select.replaceChildren(new Option("No repository selected", ""));
+  for (const repo of repos) select.add(new Option(repo.name, repo.id));
+  select.value = selectedId || "";
+}
+
+function clearConversation() {
+  $("#chat-feed").replaceChildren();
+}
+
+function showView(view) {
+  currentView = view;
+  $("#hero").classList.toggle("hidden", view !== "hero");
+  $("#chat-view").classList.toggle("hidden", view !== "chat");
+  $("#files-view").classList.toggle("hidden", view !== "files");
+  if (view === "files") loadFiles();
+}
+
+async function addRepository(button) {
+  const path = $("#repo-path").value.trim();
+  if (!path) {
+    toast("Enter a repository folder path first.");
+    $("#repo-path").focus();
+    return;
+  }
+  setBusy(button, true, "Indexing…");
+  try {
+    const result = await post("/api/repos", { path });
+    renderRepositories(result.repos, result.current_id);
+    currentRepoId = result.current_id;
+    setIndexed(result.info, result.current_id);
+    clearConversation();
+    $("#repo-path").value = "";
+    showView("hero");
+    toast(`Added ${result.repo.name}`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function selectRepository(repoId) {
+  if (!repoId) {
+    currentRepoId = null;
+    indexed = false;
+    $("#file-count").textContent = "—";
+    $("#status-title").textContent = "Ready when you are";
+    $("#status-subtitle").textContent = "Select or add a repository";
+    $("#status-pulse").classList.remove("ready");
+    clearConversation();
+    showView("hero");
+    return;
+  }
+  $("#repo-select").disabled = true;
+  try {
+    const result = await post("/api/repos/select", { id: repoId });
+    currentRepoId = repoId;
+    setIndexed(result.info, repoId);
+    clearConversation();
+    showView("hero");
+    toast(`Switched to ${result.repo.name}`);
+  } catch (error) {
+    toast(error.message);
+    await loadRepositories();
+  } finally {
+    $("#repo-select").disabled = false;
+  }
+}
+
+async function loadRepositories() {
+  try {
+    const result = await request("/api/repos");
+    renderRepositories(result.repos, result.current_id);
+    if (result.current_id) {
+      const selected = await post("/api/repos/select", { id: result.current_id });
+      setIndexed(selected.info, result.current_id);
+    } else {
+      indexed = false;
+      $("#status-subtitle").textContent = "Select or add a repository";
+    }
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function loadFiles() {
+  const list = $("#file-list");
+  list.replaceChildren();
+  $("#file-content").textContent = "Choose a file to preview its contents.";
+  $("#file-title").textContent = "Choose a file";
+  $("#file-lines").textContent = "";
+  if (!indexed) {
+    list.innerHTML = '<div class="file-empty">Select a repository to browse its files.</div>';
+    return;
+  }
+  try {
+    const result = await request("/api/files");
+    $("#files-root").textContent = result.root;
+    if (!result.files.length) {
+      list.innerHTML = '<div class="file-empty">No supported source files found.</div>';
+      return;
+    }
+    for (const file of result.files) {
+      const button = document.createElement("button");
+      button.className = "file-entry";
+      button.type = "button";
+      button.dataset.path = file.path;
+      const name = document.createElement("span");
+      name.textContent = file.path;
+      const lines = document.createElement("small");
+      lines.textContent = `${file.lines} lines`;
+      button.append(name, lines);
+      button.addEventListener("click", () => openFile(file, button));
+      list.append(button);
+    }
+  } catch (error) {
+    list.innerHTML = '<div class="file-empty">Could not load the source file list.</div>';
+    toast(error.message);
+  }
+}
+
+async function openFile(file, button) {
+  document.querySelectorAll(".file-entry.selected").forEach((item) => item.classList.remove("selected"));
+  button.classList.add("selected");
+  $("#file-title").textContent = file.path;
+  $("#file-lines").textContent = `${file.lines} lines`;
+  $("#file-content").textContent = "Loading file…";
+  try {
+    const result = await request(`/api/files/content?path=${encodeURIComponent(file.path)}`);
+    $("#file-content").textContent = result.content;
+  } catch (error) {
+    $("#file-content").textContent = error.message;
+  }
+}
+
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character]);
+}
+
+function answerMarkup(text) {
+  const safe = escapeHtml(text)
+    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+  return safe.split("\n").map((line) => {
+    const match = line.match(/^\d+\.\s+(.*)$/);
+    if (match) return `<li>${match[1]}</li>`;
+    if (!line.trim()) return "";
+    return `<p>${line}</p>`;
+  }).join("").replace(/(<li>.*?<\/li>)+/g, "<ol>$&</ol>");
+}
+
+function renderAnswer(result) {
+  const card = document.createElement("article");
+  card.className = "answer-card";
+  const sources = result.sources.map((source) => `
+    <div class="source-item">
+      <span class="source-path">${escapeHtml(source.path)}:${source.start}–${source.end}</span>
+      <pre>${escapeHtml(source.text)}</pre>
+    </div>`).join("");
+  card.innerHTML = `
+    <div class="answer-mark">✳</div>
+    <div class="answer-body">
+      ${answerMarkup(result.answer)}
+      <div class="answer-meta">${result.sources.length} source${result.sources.length === 1 ? "" : "s"} retrieved</div>
+      <div class="sources"><div class="sources-head">REFERENCES</div>${sources || '<div class="source-item">No matching source excerpts</div>'}</div>
+    </div>`;
+  $("#chat-feed").append(card);
+  $("#content").scrollTo({ top: $("#content").scrollHeight, behavior: "smooth" });
+}
+
+async function ask(question) {
+  if (asking) return;
+  if (!indexed) {
+    toast("Select or add a repository first");
+    return;
+  }
+  asking = true;
+  showView("chat");
+  const user = document.createElement("div");
+  user.className = "user-question";
+  user.textContent = question;
+  const wait = document.createElement("div");
+  wait.className = "answer-card";
+  wait.innerHTML = '<div class="answer-mark">✳</div><div class="answer-body loading">Searching your codebase<span class="dots"></span></div>';
+  $("#chat-feed").append(user, wait);
+  $("#content").scrollTo({ top: $("#content").scrollHeight, behavior: "smooth" });
+  setBusy($("#send-button"), true, "…");
+  $("#question").disabled = true;
+  try {
+    const result = await post("/api/ask", { question, limit: 6 });
+    wait.remove();
+    renderAnswer(result);
+  } catch (error) {
+    wait.remove();
+    toast(error.message);
+  } finally {
+    asking = false;
+    $("#question").disabled = false;
+    setBusy($("#send-button"), false);
+    $("#question").focus();
+  }
+}
+
+$("#index-button").addEventListener("click", () => {
+  showView("hero");
+  $("#repo-path").focus();
+});
+$("#hero-index").addEventListener("click", () => addRepository($("#hero-index")));
+$("#repo-select").addEventListener("change", (event) => selectRepository(event.target.value));
+$("#files-nav").addEventListener("click", () => showView("files"));
+$("#back-to-ask").addEventListener("click", () => showView($("#chat-feed").children.length ? "chat" : "hero"));
+$("#ask-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = $("#question");
+  const value = input.value.trim();
+  if (value) {
+    input.value = "";
+    input.style.height = "auto";
+    ask(value);
+  }
+});
+$("#question").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    $("#ask-form").requestSubmit();
+  }
+});
+$("#question").addEventListener("input", (event) => {
+  event.target.style.height = "auto";
+  event.target.style.height = `${Math.min(event.target.scrollHeight, 110)}px`;
+});
+document.querySelectorAll(".suggestion").forEach((button) => button.addEventListener("click", () => ask(button.dataset.question)));
+
+loadRepositories();
