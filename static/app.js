@@ -40,6 +40,8 @@ function setBusy(button, busy, label) {
 function setIndexed(info, repoId = currentRepoId) {
   indexed = true;
   currentRepoId = repoId;
+  const repoName = info.root.split(/[\\/]/).filter(Boolean).pop() || info.root;
+  $("#current-repo-name").textContent = repoName;
   $("#file-count").textContent = info.files;
   $("#status-title").textContent = "Repository indexed";
   $("#status-subtitle").textContent = `${info.files} files · ${info.chunks} code sections`;
@@ -48,10 +50,33 @@ function setIndexed(info, repoId = currentRepoId) {
 }
 
 function renderRepositories(repos, selectedId) {
-  const select = $("#repo-select");
-  select.replaceChildren(new Option("No repository selected", ""));
-  for (const repo of repos) select.add(new Option(repo.name, repo.id));
-  select.value = selectedId || "";
+  const list = $("#repo-list");
+  list.replaceChildren();
+  const selected = repos.find((repo) => repo.id === selectedId);
+  $("#current-repo-name").textContent = selected?.name || "No repository selected";
+  if (!repos.length) {
+    const empty = document.createElement("div");
+    empty.className = "repo-list-empty";
+    empty.textContent = "No saved repositories";
+    list.append(empty);
+    return;
+  }
+  for (const repo of repos) {
+    const button = document.createElement("button");
+    button.className = `repo-choice${repo.id === selectedId ? " active" : ""}`;
+    button.type = "button";
+    button.dataset.repoId = repo.id;
+    button.title = repo.path;
+    const dot = document.createElement("span");
+    dot.className = "repo-choice-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const name = document.createElement("span");
+    name.className = "repo-choice-name";
+    name.textContent = repo.name;
+    button.append(dot, name);
+    button.addEventListener("click", () => selectRepository(repo.id));
+    list.append(button);
+  }
 }
 
 function clearConversation() {
@@ -91,22 +116,15 @@ async function addRepository(button) {
 }
 
 async function selectRepository(repoId) {
-  if (!repoId) {
-    currentRepoId = null;
-    indexed = false;
-    $("#file-count").textContent = "—";
-    $("#status-title").textContent = "Ready when you are";
-    $("#status-subtitle").textContent = "Select or add a repository";
-    $("#status-pulse").classList.remove("ready");
-    clearConversation();
-    showView("hero");
-    return;
-  }
-  $("#repo-select").disabled = true;
+  if (!repoId || (repoId === currentRepoId && indexed)) return;
+  document.querySelectorAll(".repo-choice").forEach((button) => { button.disabled = true; });
   try {
     const result = await post("/api/repos/select", { id: repoId });
     currentRepoId = repoId;
     setIndexed(result.info, repoId);
+    document.querySelectorAll(".repo-choice").forEach((button) => {
+      button.classList.toggle("active", button.dataset.repoId === repoId);
+    });
     clearConversation();
     showView("hero");
     toast(`Switched to ${result.repo.name}`);
@@ -114,7 +132,7 @@ async function selectRepository(repoId) {
     toast(error.message);
     await loadRepositories();
   } finally {
-    $("#repo-select").disabled = false;
+    document.querySelectorAll(".repo-choice").forEach((button) => { button.disabled = false; });
   }
 }
 
@@ -259,7 +277,13 @@ $("#index-button").addEventListener("click", () => {
   $("#repo-path").focus();
 });
 $("#hero-index").addEventListener("click", () => addRepository($("#hero-index")));
-$("#repo-select").addEventListener("change", (event) => selectRepository(event.target.value));
+$("#repo-collapse").addEventListener("click", (event) => {
+  const list = $("#repo-list");
+  const collapsed = list.classList.toggle("collapsed");
+  event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
+  event.currentTarget.setAttribute("aria-label", collapsed ? "Expand repository list" : "Collapse repository list");
+  event.currentTarget.querySelector("span").textContent = collapsed ? "›" : "⌄";
+});
 $("#files-nav").addEventListener("click", () => showView("files"));
 $("#back-to-ask").addEventListener("click", () => showView($("#chat-feed").children.length ? "chat" : "hero"));
 $("#ask-form").addEventListener("submit", (event) => {

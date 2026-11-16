@@ -12,7 +12,14 @@
     <aside class="sidebar">
       <a class="brand" href="/"><span class="brand-mark"><i></i><i></i><i></i></span><span>devrag</span></a>
       <div class="workspace-label">WORKSPACE</div>
-      <div class="repo-card"><div class="repo-icon">⌘</div><div class="repo-info"><strong>Current repository</strong><select id="repo-select" aria-label="Select a saved repository"><option value="">No repository selected</option></select></div></div>
+      <section class="repo-switcher" aria-label="Saved repositories">
+        <div class="repo-switcher-header">
+          <div class="repo-icon">⌘</div>
+          <div class="repo-switcher-label"><strong>REPOSITORIES</strong><small id="current-repo-name">No repository selected</small></div>
+          <button id="repo-collapse" class="repo-collapse" type="button" aria-expanded="true" aria-controls="repo-list" aria-label="Collapse repository list"><span aria-hidden="true">⌄</span></button>
+        </div>
+        <div id="repo-list" class="repo-list"></div>
+      </section>
       <button id="index-button" class="index-button"><span>＋</span> Add a repository</button>
       <div class="sidebar-divider"></div>
       <div class="side-heading">YOUR SPACE</div>
