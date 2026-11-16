@@ -13,6 +13,8 @@ uvicorn main:app --reload
 
 Open http://127.0.0.1:8000. Enter the repository path and click **Index repository**. Set `OPENAI_API_KEY` in your environment to enable generated explanations; without it, DevRAG returns ranked code locations and symbol hints. Use a trusted local repository because enabling an LLM sends retrieved excerpts to the configured OpenAI API.
 
+You can also ask about API routes and HTTP calls, or ask what functions are defined and what they do. Function summaries use docstrings when available; otherwise DevRAG reports the function name and points to its source so you can verify its behavior.
+
 ## API
 
 - `POST /api/index` with `{ "path": "C:/path/to/repository" }`

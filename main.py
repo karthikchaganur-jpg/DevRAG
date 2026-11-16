@@ -17,6 +17,7 @@ ROOT = Path(os.getenv("DEVRAG_REPO", ".")).resolve()
 STATIC = Path(__file__).parent / "static"
 SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", "dist", "build", ".next"}
 TEXT_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".c", ".h", ".cpp", ".cs", ".rb", ".php", ".swift", ".kt", ".sql", ".md", ".yaml", ".yml", ".toml", ".json", ".html", ".css", ".sh"}
+MANIFEST_NAMES = {"requirements.txt", "package.json", "pyproject.toml", "Pipfile", "Pipfile.lock", "poetry.lock", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "build.gradle.kts"}
 MAX_FILE_BYTES = 500_000
 REGISTRY_PATH = Path.home() / ".devrag" / "repos.json"
 chunks: list[dict[str, Any]] = []
@@ -94,7 +95,7 @@ def index_repository(root: Path) -> dict[str, Any]:
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
         for name in names:
             path = Path(folder) / name
-            if path.suffix.lower() not in TEXT_EXTS:
+            if path.suffix.lower() not in TEXT_EXTS and name.lower() not in MANIFEST_NAMES:
                 continue
             try:
                 if path.stat().st_size > MAX_FILE_BYTES:
@@ -118,16 +119,109 @@ def terms(text: str) -> list[str]:
     return [w.lower() for w in re.findall(r"[A-Za-z_][A-Za-z0-9_]{1,}", text) if len(w) > 2]
 
 
+def question_kind(question: str) -> str | None:
+    query = set(terms(question))
+    if query & {"library", "libraries", "package", "packages", "dependency", "dependencies", "framework", "frameworks"}:
+        return "libraries"
+    if query & {"api", "apis", "endpoint", "endpoints", "route", "routes"}:
+        return "apis"
+    if query & {"function", "functions", "method", "methods"}:
+        return "functions"
+    return None
+
+
+API_PATTERN = re.compile(
+    r"(?i)(?:@(?:app|router|bp|blueprint)\.(?:get|post|put|patch|delete|route)|"
+    r"\b(?:app|router)\.(?:get|post|put|patch|delete)\s*\(|"
+    r"\b(?:fetch|axios\.(?:get|post|put|patch|delete)|requests\.(?:get|post|put|patch|delete)|httpx\.(?:get|post|put|patch|delete))\s*\(|"
+    r"\bpath\s*\()"
+)
+
+
+def extract_api_facts(sources: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    facts: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in sources:
+        for offset, line in enumerate(source["text"].splitlines()):
+            cleaned = line.strip()
+            if cleaned and API_PATTERN.search(cleaned):
+                ref = f"{source['path']}:{source['start'] + offset}"
+                fact = (cleaned[:180], ref)
+                if fact not in seen:
+                    seen.add(fact)
+                    facts.append(fact)
+    return facts
+
+
+def extract_function_facts(sources: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    facts: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    declarations = (
+        re.compile(r"^\s*(?:export\s+)?(?:(?:async\s+)?function\s+|(?:async\s+)?(?:def|func|fn)\s+)([A-Za-z_$][\w$]*)\s*\(([^)]*)\)"),
+        re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>"),
+        re.compile(r"^\s*(?:(?:public|private|protected|static|async)\s+)*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{"),
+    )
+    for source in sources:
+        lines = source["text"].splitlines()
+        parsed_python = False
+        if Path(source["path"]).suffix.lower() == ".py":
+            try:
+                tree = ast.parse(source["text"])
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        doc = ast.get_docstring(node, clean=True)
+                        purpose = " ".join(doc.split()).split(".")[0] if doc else "No docstring; behavior needs to be checked in the cited code."
+                        ref = f"{source['path']}:{source['start'] + node.lineno - 1}"
+                        fact = (f"`{node.name}()` — {purpose[:140]}", ref)
+                        if fact not in seen:
+                            seen.add(fact)
+                            facts.append(fact)
+                parsed_python = True
+            except SyntaxError:
+                pass
+        if parsed_python:
+            continue
+        for offset, line in enumerate(lines):
+            match = next((pattern.match(line) for pattern in declarations if pattern.match(line)), None)
+            if not match:
+                continue
+            name = match.group(1)
+            if name in {"if", "for", "while", "switch", "catch", "with", "return"}:
+                continue
+            ref = f"{source['path']}:{source['start'] + offset}"
+            purpose = re.sub(r"[_$]+", " ", name).strip()
+            fact = (f"`{name}()` — purpose is not documented; the name suggests {purpose}.", ref)
+            if fact not in seen:
+                seen.add(fact)
+                facts.append(fact)
+    return facts
+
+
 def rank(question: str, limit: int = 6) -> list[dict[str, Any]]:
     query = set(terms(question))
     if not query:
         return []
+    kind = question_kind(question)
     scored = []
     for item in chunks:
         body = item["text"].lower()
         path = item["path"].lower()
         words = set(terms(body))
         overlap = query & words
+        is_manifest = Path(item["path"]).name.lower() in MANIFEST_NAMES
+        has_import = bool(re.search(r"(?m)^\s*(?:import\s+|from\s+\S+\s+import\s+|require\s*\(|.*\bfrom\s*['\"])", item["text"]))
+        has_api = bool(API_PATTERN.search(item["text"]))
+        has_function = bool(re.search(r"(?m)^\s*(?:(?:async\s+)?def\s+|(?:export\s+)?(?:async\s+)?function\s+|(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>)", item["text"]))
+        if kind == "libraries" and (is_manifest or has_import):
+            score = 12 if is_manifest else 5
+            scored.append((score, item))
+            continue
+        if kind == "apis" and has_api:
+            scored.append((10, item))
+            continue
+        if kind == "functions" and has_function:
+            scored.append((10, item))
+            continue
         if not overlap:
             continue
         score = sum(2.5 if word in path else 1 for word in overlap)
@@ -210,6 +304,48 @@ def local_notes(source: dict[str, Any], question: str) -> list[str]:
 def answer_text(question: str, sources: list[dict[str, Any]]) -> str:
     if not sources:
         return "I couldn’t find a strong match in the indexed files. Try a specific function, module, or domain term, or re-index the repository."
+    kind = question_kind(question)
+    if kind == "apis":
+        facts = extract_api_facts(sources)
+        if facts:
+            return "I found API routes and external API calls in the indexed code:\n\n" + "\n".join(f"- `{fact}` — `{ref}`" for fact, ref in facts[:30])
+        return "I didn’t find recognizable API routes or HTTP calls in the retrieved code. Try asking about endpoints, routes, or a specific HTTP client."
+    if kind == "functions":
+        facts = extract_function_facts(sources)
+        if facts:
+            return "Here are functions I found and what the code says about them:\n\n" + "\n".join(f"- {fact} — `{ref}`" for fact, ref in facts[:30])
+        return "I didn’t find function definitions in the retrieved code. Try naming a module or asking for a specific function."
+    if kind == "libraries":
+        found: dict[str, set[str]] = {}
+        for source in sources:
+            path = source["path"]
+            body = source["text"]
+            name = Path(path).name.lower()
+            packages: list[str] = []
+            if name == "package.json":
+                try:
+                    data = json.loads(body)
+                    for group in ("dependencies", "devDependencies", "peerDependencies"):
+                        packages.extend(data.get(group, {}).keys())
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            elif name == "requirements.txt" or name == "pipfile":
+                packages.extend(re.findall(r"(?m)^\s*([A-Za-z0-9_.-]+)\s*(?:[<>=!~].*)?$", body))
+            elif name in {"pyproject.toml", "poetry.lock", "pipfile.lock", "cargo.toml", "go.mod", "pom.xml", "build.gradle", "build.gradle.kts"}:
+                packages.extend(re.findall(r"(?m)^\s*([A-Za-z][\w.-]+)\s*(?:=|:|\s+)", body))
+            else:
+                packages.extend(re.findall(r"(?m)^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+)|.*?\bfrom\s*['\"]([^'\"]+)['\"])", body))
+                packages = [next((part for part in match if part), "").split(".")[0] for match in packages]
+            for package in packages:
+                clean = package.strip().strip("\"'")
+                if clean and clean.lower() not in {"dependencies", "devdependencies", "peerdependencies", "name", "version", "python", "node", "true", "false"}:
+                    found.setdefault(clean, set()).add(f"{path}:{source['start']}")
+        if found:
+            lines = ["I found these libraries or packages in the indexed repository:", ""]
+            for package, refs in sorted(found.items(), key=lambda item: item[0].lower()):
+                lines.append(f"- **`{package}`** — " + ", ".join(f"`{ref}`" for ref in sorted(refs)))
+            return "\n".join(lines)
+        return "I found import statements, but no dependency manifest in the retrieved files confirmed the libraries. Check the references below or index the repository again."
     # If configured, use OpenAI for synthesis while keeping all citations grounded in retrieved chunks.
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
