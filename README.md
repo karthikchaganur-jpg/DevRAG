@@ -21,6 +21,12 @@ Open http://127.0.0.1:8000. Enter the repository path and click **Index reposito
 py -m unittest discover -s tests -v
 ```
 
+## Run tests
+
+```powershell
+py -m unittest discover -s tests -v
+```
+
 You can also ask about API routes and HTTP calls, or ask what functions are defined and what they do. Function summaries use docstrings when available; otherwise DevRAG reports the function name and points to its source so you can verify its behavior.
 
 ## API
