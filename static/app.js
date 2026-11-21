@@ -47,6 +47,8 @@ function setIndexed(info, repoId = currentRepoId) {
   $("#status-subtitle").textContent = `${info.files} files · ${info.chunks} code sections`;
   $("#status-pulse").classList.add("ready");
   $("#files-root").textContent = info.root;
+  $("#model-state").textContent = info.semantic_search ? "Hybrid search" : "Keyword search";
+  $("#model-state").title = info.embedding_error || (info.semantic_search ? "Local semantic + keyword retrieval" : "Install fastembed and connect once to download the local model for semantic retrieval");
 }
 
 function renderRepositories(repos, selectedId) {
@@ -225,7 +227,7 @@ function renderAnswer(result) {
   card.className = "answer-card";
   const sources = result.sources.map((source) => `
     <div class="source-item">
-      <span class="source-path">${escapeHtml(source.path)}:${source.start}–${source.end}</span>
+      <span class="source-path">${escapeHtml(source.path)}:${source.match_lines?.length ? source.match_lines.join(", ") : `${source.start}–${source.end}`}</span>
       <pre>${escapeHtml(source.text)}</pre>
     </div>`).join("");
   card.innerHTML = `
