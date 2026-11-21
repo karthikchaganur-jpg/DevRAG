@@ -225,7 +225,7 @@ function renderAnswer(result) {
   card.className = "answer-card";
   const sources = result.sources.map((source) => `
     <div class="source-item">
-      <span class="source-path">${escapeHtml(source.path)}:${source.start}–${source.end}</span>
+      <span class="source-path">${escapeHtml(source.path)}:${source.match_lines?.length ? source.match_lines.join(", ") : `${source.start}–${source.end}`}</span>
       <pre>${escapeHtml(source.text)}</pre>
     </div>`).join("");
   card.innerHTML = `
